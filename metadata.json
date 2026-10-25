@@ -1,0 +1,6 @@
+{
+  "name": "Nexus Unblocked - Retro & Web Arcade Games",
+  "description": "Fast, clean unblocked games portal with instant iframe embedding, custom game manager, and playable arcade classics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

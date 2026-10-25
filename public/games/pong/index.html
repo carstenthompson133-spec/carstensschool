@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Quantum Pong</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+    body {
+      background: #020617;
+      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      overflow: hidden;
+      padding: 10px;
+    }
+    .hud {
+      display: flex;
+      gap: 30px;
+      align-items: center;
+      margin-bottom: 12px;
+      font-variant-numeric: tabular-nums;
+    }
+    .score-block {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .score-name { font-size: 11px; color: #94a3b8; font-weight: 600; text-transform: uppercase; }
+    .score-num { font-size: 32px; font-weight: 800; color: #38bdf8; }
+    .vs { font-size: 14px; font-weight: 700; color: #64748b; }
+    .game-box {
+      position: relative;
+      background: #020617;
+      border: 2px solid #1e293b;
+      border-radius: 12px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+      overflow: hidden;
+    }
+    canvas { display: block; }
+    .overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(2, 6, 23, 0.9);
+      backdrop-filter: blur(4px);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      text-align: center;
+      padding: 20px;
+    }
+    .overlay.hidden { display: none; }
+    .overlay h2 { font-size: 24px; font-weight: 800; color: #38bdf8; }
+    .overlay p { font-size: 13px; color: #94a3b8; max-width: 320px; line-height: 1.5; }
+    .mode-select {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+    .mode-btn {
+      background: #1e293b;
+      color: #94a3b8;
+      border: 1px solid #334155;
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .mode-btn.active {
+      background: #38bdf8;
+      color: #020617;
+      border-color: #38bdf8;
+    }
+    .btn {
+      background: #38bdf8;
+      color: #020617;
+      border: none;
+      padding: 9px 24px;
+      font-size: 13px;
+      font-weight: 700;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .hint { margin-top: 8px; font-size: 12px; color: #64748b; }
+  </style>
+</head>
+<body>
+  <div class="hud">
+    <div class="score-block">
+      <span class="score-name" id="p1Label">Player 1</span>
+      <span class="score-num" id="p1Score">0</span>
+    </div>
+    <span class="vs">:</span>
+    <div class="score-block">
+      <span class="score-name" id="p2Label">AI CPU</span>
+      <span class="score-num" id="p2Score">0</span>
+    </div>
+  </div>
+
+  <div class="game-box">
+    <canvas id="cv" width="480" height="360"></canvas>
+
+    <div id="startOverlay" class="overlay">
+      <h2>QUANTUM PONG</h2>
+      <p>Classic arcade paddle battle. First player to reach 7 points claims victory.</p>
+      
+      <div class="mode-select">
+        <button class="mode-btn active" data-mode="1p">1P vs Smart AI</button>
+        <button class="mode-btn" data-mode="2p">2P Local Co-op</button>
+      </div>
+
+      <button class="btn" id="startBtn">START MATCH</button>
+    </div>
+
+    <div id="endOverlay" class="overlay hidden">
+      <h2 id="endTitle" style="color: #38bdf8;">MATCH WON!</h2>
+      <p id="endDesc">Player 1 took the championship.</p>
+      <button class="btn" id="restartBtn">PLAY AGAIN</button>
+    </div>
+  </div>
+
+  <div class="hint" id="controlsHint">P1: [W/S] or Mouse · P2: [▲/▼] Arrows</div>
+
+  <script>
+    const canvas = document.getElementById('cv');
+    const ctx = canvas.getContext('2d');
+    const p1ScoreEl = document.getElementById('p1Score');
+    const p2ScoreEl = document.getElementById('p2Score');
+    const p2Label = document.getElementById('p2Label');
+    const startOverlay = document.getElementById('startOverlay');
+    const endOverlay = document.getElementById('endOverlay');
+    const endTitle = document.getElementById('endTitle');
+    const endDesc = document.getElementById('endDesc');
+    const controlsHint = document.getElementById('controlsHint');
+
+    let audioCtx = null;
+    function beep(freq, type = 'sine', dur = 0.08) {
+      try {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        const osc = audioCtx.createOscillator();
+        const g = audioCtx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+        g.gain.setValueAtTime(0.1, audioCtx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+        osc.connect(g);
+        g.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + dur);
+      } catch (e) {}
+    }
+
+    let mode = '1p'; // '1p' or '2p'
+    let isPlaying = false;
+    let p1Score = 0;
+    let p2Score = 0;
+    const WIN_SCORE = 7;
+
+    const p1 = { x: 20, y: 140, w: 10, h: 70, speed: 6 };
+    const p2 = { x: 450, y: 140, w: 10, h: 70, speed: 5.2 };
+    const ball = { x: 240, y: 180, r: 6, vx: 5, vy: 3 };
+
+    const keys = {};
+    window.addEventListener('keydown', e => keys[e.key] = true);
+    window.addEventListener('keyup', e => keys[e.key] = false);
+
+    canvas.addEventListener('mousemove', e => {
+      const rect = canvas.getBoundingClientRect();
+      const mouseY = e.clientY - rect.top;
+      p1.y = Math.max(0, Math.min(canvas.height - p1.h, mouseY - p1.h / 2));
+    });
+
+    document.querySelectorAll('.mode-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        mode = btn.dataset.mode;
+        p2Label.innerText = mode === '1p' ? 'AI CPU' : 'Player 2';
+      });
+    });
+
+    function resetBall(direction = 1) {
+      ball.x = canvas.width / 2;
+      ball.y = canvas.height / 2;
+      const angle = (Math.random() - 0.5) * (Math.PI / 4);
+      const speed = 5;
+      ball.vx = direction * speed * Math.cos(angle);
+      ball.vy = speed * Math.sin(angle);
+    }
+
+    function startGame() {
+      p1Score = 0;
+      p2Score = 0;
+      p1ScoreEl.innerText = '0';
+      p2ScoreEl.innerText = '0';
+      resetBall(Math.random() > 0.5 ? 1 : -1);
+      startOverlay.classList.add('hidden');
+      endOverlay.classList.add('hidden');
+      isPlaying = true;
+      requestAnimationFrame(loop);
+    }
+
+    function loop() {
+      if (!isPlaying) return;
+
+      // P1 Keyboard
+      if ((keys['w'] || keys['W']) && p1.y > 0) p1.y -= p1.speed;
+      if ((keys['s'] || keys['S']) && p1.y + p1.h < canvas.height) p1.y += p1.speed;
+
+      // P2 Controller
+      if (mode === '2p') {
+        if (keys['ArrowUp'] && p2.y > 0) p2.y -= p2.speed;
+        if (keys['ArrowDown'] && p2.y + p2.h < canvas.height) p2.y += p2.speed;
+      } else {
+        // AI Tracking with small lag
+        const targetY = ball.y - p2.h / 2;
+        if (p2.y < targetY - 4) p2.y += p2.speed;
+        else if (p2.y > targetY + 4) p2.y -= p2.speed;
+        p2.y = Math.max(0, Math.min(canvas.height - p2.h, p2.y));
+      }
+
+      // Ball Physics
+      ball.x += ball.vx;
+      ball.y += ball.vy;
+
+      // Top / Bottom wall bounce
+      if (ball.y - ball.r <= 0) {
+        ball.y = ball.r;
+        ball.vy *= -1;
+        beep(360, 'sine', 0.05);
+      } else if (ball.y + ball.r >= canvas.height) {
+        ball.y = canvas.height - ball.r;
+        ball.vy *= -1;
+        beep(360, 'sine', 0.05);
+      }
+
+      // P1 Paddle Collision
+      if (
+        ball.x - ball.r <= p1.x + p1.w &&
+        ball.x + ball.r >= p1.x &&
+        ball.y >= p1.y &&
+        ball.y <= p1.y + p1.h &&
+        ball.vx < 0
+      ) {
+        const offset = (ball.y - (p1.y + p1.h / 2)) / (p1.h / 2);
+        const speed = Math.min(10, Math.sqrt(ball.vx * ball.vx + ball.vy * ball.vy) * 1.05);
+        const angle = offset * (Math.PI / 3);
+        ball.vx = Math.abs(speed * Math.cos(angle));
+        ball.vy = speed * Math.sin(angle);
+        beep(480, 'square', 0.06);
+      }
+
+      // P2 Paddle Collision
+      if (
+        ball.x + ball.r >= p2.x &&
+        ball.x - ball.r <= p2.x + p2.w &&
+        ball.y >= p2.y &&
+        ball.y <= p2.y + p2.h &&
+        ball.vx > 0
+      ) {
+        const offset = (ball.y - (p2.y + p2.h / 2)) / (p2.h / 2);
+        const speed = Math.min(10, Math.sqrt(ball.vx * ball.vx + ball.vy * ball.vy) * 1.05);
+        const angle = offset * (Math.PI / 3);
+        ball.vx = -Math.abs(speed * Math.cos(angle));
+        ball.vy = speed * Math.sin(angle);
+        beep(440, 'square', 0.06);
+      }
+
+      // Scoring
+      if (ball.x < -10) {
+        p2Score++;
+        p2ScoreEl.innerText = p2Score;
+        beep(220, 'sawtooth', 0.2);
+        if (p2Score >= WIN_SCORE) {
+          endGame(mode === '1p' ? 'AI CPU Wins!' : 'Player 2 Wins!');
+          return;
+        }
+        resetBall(1);
+      } else if (ball.x > canvas.width + 10) {
+        p1Score++;
+        p1ScoreEl.innerText = p1Score;
+        beep(660, 'sine', 0.2);
+        if (p1Score >= WIN_SCORE) {
+          endGame('Player 1 Wins!');
+          return;
+        }
+        resetBall(-1);
+      }
+
+      render();
+      requestAnimationFrame(loop);
+    }
+
+    function endGame(winner) {
+      isPlaying = false;
+      endTitle.innerText = winner;
+      endDesc.innerText = `Final Score: ${p1Score} - ${p2Score}`;
+      endOverlay.classList.remove('hidden');
+    }
+
+    function render() {
+      ctx.fillStyle = '#020617';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Center divider
+      ctx.strokeStyle = '#1e293b';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 6]);
+      ctx.beginPath();
+      ctx.moveTo(canvas.width / 2, 0);
+      ctx.lineTo(canvas.width / 2, canvas.height);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // P1 Paddle
+      ctx.fillStyle = '#38bdf8';
+      ctx.shadowColor = '#38bdf8';
+      ctx.shadowBlur = 8;
+      ctx.fillRect(p1.x, p1.y, p1.w, p1.h);
+
+      // P2 Paddle
+      ctx.fillStyle = '#f43f5e';
+      ctx.shadowColor = '#f43f5e';
+      ctx.fillRect(p2.x, p2.y, p2.w, p2.h);
+
+      // Ball
+      ctx.fillStyle = '#f8fafc';
+      ctx.shadowColor = '#f8fafc';
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+
+    document.getElementById('startBtn').addEventListener('click', startGame);
+    document.getElementById('restartBtn').addEventListener('click', startGame);
+
+    render();
+  </script>
+</body>
+</html>
