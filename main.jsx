@@ -1,1 +1,1 @@
-import './src/main.jsx';
+import './script.js';
